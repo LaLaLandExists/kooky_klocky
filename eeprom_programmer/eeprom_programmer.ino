@@ -161,17 +161,17 @@ void _forEachAddress(const char* addr, byte data, AddrCollector collector)
 
 void _prepareForWrite()
 {
-  // Set the pins
-  for (int pin = PIN_D0; pin <= PIN_D7; ++pin)
-  {
-    pinMode(pin, OUTPUT);
-  }
   pinMode(PIN_LATCH, OUTPUT);
   pinMode(PIN_SHIFT, OUTPUT);
   pinMode(PIN_ADDR, OUTPUT);
   pinMode(PIN_WE, OUTPUT);
   digitalWrite(PIN_WE, HIGH);
   _addressWrite(0, HIGH); // Turn off output enable
+  // Set the pins
+  for (int pin = PIN_D0; pin <= PIN_D7; ++pin)
+  {
+    pinMode(pin, OUTPUT);
+  }
 }
 
 void _prepareForRead()
@@ -185,6 +185,7 @@ void _prepareForRead()
   pinMode(PIN_ADDR, OUTPUT);
   pinMode(PIN_WE, OUTPUT);
   digitalWrite(PIN_WE, HIGH);
+  _addressWrite(0, HIGH); // Turn off OE at first
 }
 
 static bool s_writeMatches = true;
@@ -245,6 +246,7 @@ byte _readData(int address)
     data = (data << 1) | digitalRead(pin);
   }
 
+  _addressWrite(0, HIGH); // Turn OE off
   return data;
 }
 
@@ -279,20 +281,15 @@ void _pollInput(const char* message, unsigned int waitTimeUs)
 String input(const char* message, unsigned int waitTimeUs)
 {
   _pollInput(message, waitTimeUs);
-  return Serial.readString();
+  String result = Serial.readString();
+  result.trim();
+  return result;
 }
 
 int inputInt(const char* message = nullptr, unsigned int waitTimeUs = 750)
 {
   _pollInput(message, waitTimeUs);
   return Serial.parseInt();
-}
-
-void _readMode()
-{
-  Serial.println("Reading ROM..");
-  readAllData();
-  Serial.println("[end]");
 }
 
 void loop() {
@@ -313,7 +310,9 @@ void loop() {
       break;
     case 'R':
     case 'r':
-      _readMode();
+      Serial.println("Reading ROM..");
+      readAllData();
+      Serial.println("[end]");
       break;
     default:
       Serial.println("(!) Unknown mode.");
@@ -327,4 +326,7 @@ void loop() {
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
+  // Set the mode to reading since it may take a while for the user to respond.
+  // In reading mode, the data pins are in High-Z unless readData() is called.
+  _prepareForRead();
 }
