@@ -21,11 +21,12 @@
 #define PIN_D7    12
 
 // Configuration
-#define LOADED_ROM CPANEL_ROM // What content should we load into the EEPROM?
+#define LOADED_ROM RGBTMUX_ROM // What content should we load into the EEPROM?
 
 static char FMTBUF[128] = {};
 
 typedef void (*AddrCollector)(int address, byte data);
+typedef void (*AddrAnnouncer)(const char* address, byte data);
 
 int _countx_and_validate(const char* addr, int N)
 {
@@ -125,11 +126,11 @@ void _writeToAddress(int address, byte data)
   // Wait for tWC - tWP = 1ms
   delay(1);
 
-  sprintf(FMTBUF, "(!) Wrote '%02X' at [0x%X]", data, address);
-  Serial.println(FMTBUF);
+  //sprintf(FMTBUF, "(!) Wrote '%02X' at [#%d]", data, address);
+  //Serial.println(FMTBUF);
 }
 
-void _forEachAddress(const char* addr, byte data, AddrCollector collector)
+void _forEachAddress(const char* addr, byte data, AddrCollector collector, AddrAnnouncer announcer)
 {
   static int s_indices[ADDR_WIDTH] = { 0 };
   const int N = strlen(addr);
@@ -137,6 +138,8 @@ void _forEachAddress(const char* addr, byte data, AddrCollector collector)
 
   const int NX = _countx_and_validate(addr, N);
   if (NX == -1) return;
+
+  if (announcer != nullptr) announcer(addr, data);
 
   // Calculate all indices for wildcards
   int raw_address = _collect_indices(s_indices, addr, N);
@@ -155,6 +158,7 @@ void _forEachAddress(const char* addr, byte data, AddrCollector collector)
       int ithBit = (xval >> i) & 0x1;
       address |= ithBit << targetIndex;
     }
+
     collector(address, data);
   }
 }
@@ -200,20 +204,32 @@ void _validateData(int address, byte data)
   }
 }
 
+void _writeAnnouncer(const char* addr, byte data)
+{
+  sprintf(FMTBUF, "Writing '%02X' to [%s]", data, addr);
+  Serial.println(FMTBUF);
+}
+
+void _validateAnnouncer(const char* addr, byte data)
+{
+  sprintf(FMTBUF, "Checking [%s] for '%02X'..", addr, data);
+  Serial.println(FMTBUF);
+}
+
 String input(const char* message = nullptr, unsigned int waitTimeUs = 750);
 void writeData(const EEPROM_Data* data)
 {
   _prepareForWrite();
   // Clear the EEPROM first (without using the EEPROM clear feature)
   Serial.println("Clearing EEPROM..");
-  _forEachAddress("xxxxxxxxxxxxx", 0, _writeToAddress);
+  _forEachAddress("xxxxxxxxxxxxx", 0, _writeToAddress, _writeAnnouncer);
 
   for (const EEPROM_Data* now = data; now->address != nullptr; ++now)
   {
-    _forEachAddress(now->address, now->data, _writeToAddress);
+    _forEachAddress(now->address, now->data, _writeToAddress, _writeAnnouncer);
   }
 
-  String response = input("Do an integrity check? (Y/n) $ ");
+  String response = input("Do an integrity check? (Y/n)\n");
   response.trim();
 
   switch (response.charAt(0))
@@ -224,11 +240,12 @@ void writeData(const EEPROM_Data* data)
     s_writeMatches = true;
     for (const EEPROM_Data* now = data; now->address != nullptr && s_writeMatches; ++now)
     {
-      _forEachAddress(now->address, now->data, _validateData);
+      _forEachAddress(now->address, now->data, _validateData, _validateAnnouncer);
     }
     if (!s_writeMatches)
     {
       sprintf(FMTBUF, "(!) EEPROM is not written properly at 0x%x.", s_brokenAddr);
+      Serial.println(FMTBUF);
     }
     break;
   default:
@@ -253,20 +270,21 @@ byte _readData(int address)
 void readAllData()
 {
   _prepareForRead();
-  byte row[8] = {};
+  byte row[16] = {};
 
   // 1 Byte Divisions
-  sprintf(FMTBUF, "       | b0 b1 b2 b3 b4 b5 b6 b7");
+  sprintf(FMTBUF, "       | 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F");
   Serial.println(FMTBUF);
-  for (int i = 0; i < ADDR_MAX; i += 8)
+  for (int i = 0; i < ADDR_MAX; i += 16)
   {
-    for (int j = 0; j < 8; ++j)
+    for (int j = 0; j < 16; ++j)
     {
       row[j] = _readData(i | j);
     }
 
-    sprintf(FMTBUF, "0x%04X | %02X %02X %02X %02X %02X %02X %02X %02X", i,
-            row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7]);
+    sprintf(FMTBUF, "0x%04X | %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X", i,
+            row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7],
+            row[8], row[9], row[10], row[11], row[12], row[13], row[14], row[15]);
     Serial.println(FMTBUF);
   }
 
@@ -325,7 +343,7 @@ void loop() {
 
 void setup() {
   // put your setup code here, to run once:
-  Serial.begin(9600);
+  Serial.begin(74880);
   // Set the mode to reading since it may take a while for the user to respond.
   // In reading mode, the data pins are in High-Z unless readData() is called.
   _prepareForRead();

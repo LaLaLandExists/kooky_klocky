@@ -10,5 +10,6 @@ struct EEPROM_Data
 extern const EEPROM_Data TTABLE_ROM[];
 extern const EEPROM_Data CPANEL_ROM[];
 extern const EEPROM_Data RGBTABLE_ROM[];
+extern const EEPROM_Data RGBTMUX_ROM[];
 
 #endif
