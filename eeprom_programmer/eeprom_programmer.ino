@@ -220,18 +220,21 @@ String input(const char* message = nullptr, unsigned int waitTimeUs = 750);
 void writeData(const EEPROM_Data* data)
 {
   _prepareForWrite();
-  // Clear the EEPROM first (without using the EEPROM clear feature)
-  Serial.println("Clearing EEPROM..");
-  _forEachAddress("xxxxxxxxxxxxx", 0, _writeToAddress, _writeAnnouncer);
-
+  String response = input("Clear EEPROM? (Y/n)\n");
+  switch (response.charAt(0))
+  {
+  case 'Y':
+  case 'y':
+    Serial.println("Clearing EEPROM..");
+    _forEachAddress("xxxxxxxxxxxxx", 0, _writeToAddress, nullptr);
+  }
+  
   for (const EEPROM_Data* now = data; now->address != nullptr; ++now)
   {
     _forEachAddress(now->address, now->data, _writeToAddress, _writeAnnouncer);
   }
 
-  String response = input("Do an integrity check? (Y/n)\n");
-  response.trim();
-
+  response = input("Do an integrity check? (Y/n)\n");
   switch (response.charAt(0))
   {
   case 'Y':
