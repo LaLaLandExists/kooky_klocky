@@ -39,5 +39,5 @@ const EEPROM_Data TTABLE_ROM[] = {
   { "xxxxxx 1101 x1x", 13 },
   { "xxxxxx 1110 1xx", 14 },
   { "xxxxxx 1111 x1x", 15 },
-  { nullptr, 0x0 }
+  { nullptr, 0 }
 };

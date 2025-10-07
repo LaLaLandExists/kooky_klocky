@@ -29,5 +29,5 @@ const EEPROM_Data RGBTABLE_ROM[] = {
   { "xxxxxx 0 10 0011", 0b001 }, // 23
   // Force Red everything
   { "xxxxxx 1 xx xxxx", 0b100},
-  { nullptr, 0x0 }
+  { nullptr, 0 }
 };

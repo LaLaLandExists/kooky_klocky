@@ -15,5 +15,5 @@ const EEPROM_Data CPANEL_ROM[] = {
   { "xxxxxxxxx 1101", 0b000110 },
   { "xxxxxxxxx 1110", 0b000110 },
   { "xxxxxxxxx 1111", 0b000000 },
-  { nullptr, 0x0 }
+  { nullptr, 0 }
 };

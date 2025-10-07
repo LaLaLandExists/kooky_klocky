@@ -7,21 +7,21 @@
 #define ADDR_MAX   (1 << 13)
 #define DATA_WIDTH 8
 
-#define PIN_LATCH 2
-#define PIN_SHIFT 3
-#define PIN_ADDR  4
+#define PIN_LATCH 11
+#define PIN_SHIFT 10
+#define PIN_ADDR  12
 #define PIN_WE    13
-#define PIN_D0    5
-#define PIN_D1    6
-#define PIN_D2    7
-#define PIN_D3    8
-#define PIN_D4    9
-#define PIN_D5    10
-#define PIN_D6    11
-#define PIN_D7    12
+#define PIN_D0    2
+#define PIN_D1    3
+#define PIN_D2    4
+#define PIN_D3    5
+#define PIN_D4    6
+#define PIN_D5    7
+#define PIN_D6    8
+#define PIN_D7    9
 
 // Configuration
-#define LOADED_ROM RGBTMUX_ROM // What content should we load into the EEPROM?
+#define LOADED_ROM RGBTMUX_ROM2 // What content should we load into the EEPROM?
 
 static char FMTBUF[128] = {};
 
@@ -229,8 +229,13 @@ void writeData(const EEPROM_Data* data)
     _forEachAddress("xxxxxxxxxxxxx", 0, _writeToAddress, nullptr);
   }
   
-  for (const EEPROM_Data* now = data; now->address != nullptr; ++now)
+  for (const EEPROM_Data* now = data;; ++now)
   {
+    if (now->address == nullptr)
+    {
+      if (now->data != 0) Serial.println("(!) This ROM is not fully written yet. Don't forget to load the next part");
+      break;
+    }
     _forEachAddress(now->address, now->data, _writeToAddress, _writeAnnouncer);
   }
 
@@ -275,7 +280,7 @@ void readAllData()
   _prepareForRead();
   byte row[16] = {};
 
-  // 1 Byte Divisions
+  // 2 Byte Divisions
   sprintf(FMTBUF, "       | 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F");
   Serial.println(FMTBUF);
   for (int i = 0; i < ADDR_MAX; i += 16)
@@ -320,7 +325,7 @@ void loop() {
 
   for (;;)
   {
-    String response = input("$ ");
+    String response = input();
     response.trim();
 
     switch (response.charAt(0))

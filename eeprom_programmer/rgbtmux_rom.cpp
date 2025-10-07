@@ -1,7 +1,7 @@
 
 #include "eeprom_data.h"
 
-const EEPROM_Data RGBTMUX_ROM[] = {
+const EEPROM_Data RGBTMUX_ROM1[] = {
   //     c 012345 RGB     RGBrgbS
   { "xxx 0 100000 000", 0b0000000 },
   { "xxx 0 010000 000", 0b0000000 },
@@ -30,7 +30,11 @@ const EEPROM_Data RGBTMUX_ROM[] = {
   { "xxx 0 000100 001", 0b0000011 },
   { "xxx 0 000010 001", 0b0000011 },
   { "xxx 0 000001 001", 0b0000011 },
+  { nullptr, 1 } // Mark the ROM unfinished.
+};
 
+const EEPROM_Data RGBTMUX_ROM2[] = {
+  //     c 012345 RGB     RGBrgbS
   { "xxx 0 100000 110", 0b1100000 },
   { "xxx 0 010000 110", 0b1100000 },
   { "xxx 0 001000 110", 0b1100000 },
