@@ -1,358 +1,354 @@
-#include <Arduino_BuiltIn.h>
-#include <string.h>
+
+#include <stdlib.h>
 
 #include "eeprom_data.h"
 
-#define ADDR_WIDTH 13
-#define ADDR_MAX   (1 << 13)
-#define DATA_WIDTH 8
+// Pin assignments
+#define PIN_ADDR 2
+#define PIN_SHIFT 3
+#define PIN_LATCH 4
+#define PIN_WRITE 13
+#define PIN_D0 5
+// PIN_Dn = 5 + n
+#define PIN_D7 12
 
-#define PIN_LATCH 11
-#define PIN_SHIFT 10
-#define PIN_ADDR  12
-#define PIN_WE    13
-#define PIN_D0    2
-#define PIN_D1    3
-#define PIN_D2    4
-#define PIN_D3    5
-#define PIN_D4    6
-#define PIN_D5    7
-#define PIN_D6    8
-#define PIN_D7    9
+// Limits for AT28C64. Modify if needed
+#define MAX_ADDR 1 << 13 // Exclusive maximum. (2^13 - 1)
 
-// Configuration
-#define LOADED_ROM RGBTMUX_ROM2 // What content should we load into the EEPROM?
+// Which ROM do we load?
+#define LOADED_ROM RGBTMUX_ROM2
 
-static char FMTBUF[128] = {};
+const DataDescriptor TEST_ROM[] = {
+  { "0 0xxx xxxx xxxx", 0xCA },
+  { "0 1xxx xxxx xxxx", 0xFE },
+  { "1 0xxx xxxx xxxx", 0xBA },
+  { "1 1xxx xxxx xxxx", 0xBE },
 
-typedef void (*AddrCollector)(int address, byte data);
-typedef void (*AddrAnnouncer)(const char* address, byte data);
+  { nullptr, 0 }
+};
 
-int _countx_and_validate(const char* addr, int N)
+// Utils
+#define FMTBUF_SIZE 72
+
+#define PRINTF(...) do {          \
+    sprintf(FMTBUF, __VA_ARGS__); \
+    Serial.print(FMTBUF);         \
+  } while (0)
+
+#define UNREACHABLE(line) do {                                     \
+    sprintf(FMTBUF, "Debug unreachable code at line %d.\n", line); \
+    Serial.print(FMTBUF);                                          \
+  } while (0)
+
+char FMTBUF[FMTBUF_SIZE] = {};
+
+void pollInput(const char* query)
 {
-  int nx = 0, len = 0;
-
-  for (int i = 0; i < N; ++i)
-  {
-    switch (addr[i])
-    {
-    case '0':
-    case '1':
-      ++len;
-    case ' ':
-      break;
-    case 'X':
-    case 'x':
-      ++nx; ++len;
-      break;
-    default:
-      Serial.println("[[!]] Address contains unexpected characters");
-      return -1;
-    }
-  }
-
-  if (len != ADDR_WIDTH)
-  {
-    Serial.println("[[!]] Address length does not match address width");
-    return -1;
-  }
-
-  return nx;
+  if (query != nullptr) Serial.print(query);
+  while (Serial.available() == 0) delay(10);
 }
 
-int _collect_indices(int* indices, const char* addr, int N)
+String input(const char* query = nullptr)
 {
-  int cur = 0, raw_address = 0, i_cur = 0;
-  for (int i = N - 1; i >= 0; --i)
-  {
-    if (addr[i] == ' ') continue;
-    if (addr[i] == 'X' || addr[i] == 'x')
-    {
-      indices[i_cur++] = cur;
-      // Keep wildcards zero for easier bitmasking (by not changing raw_address)
-    }
-    else
-    {
-      int bit = addr[i] == '0' ? 0 : 1;
-      raw_address |= bit << cur;
-    }
-
-    ++cur;
-  }
-  return raw_address;
+  pollInput(query);
+  String got = Serial.readString();
+  got.trim();
+  return got;
 }
 
-void _addressWrite(int address, int oeState)
+void setAddress(int address, bool outputEnable)
 {
-  // An address word is 13 bits + 1 bit for the OE pin
-  shiftOut(PIN_ADDR, PIN_SHIFT, MSBFIRST, (address >> 8) | (oeState ? 0x20 : 0x0));
+  // Output is enabled if OE is low
+  shiftOut(PIN_ADDR, PIN_SHIFT, MSBFIRST, (address >> 8) | (outputEnable ? 0x0 : 0x20));
   shiftOut(PIN_ADDR, PIN_SHIFT, MSBFIRST, address);
 
-  // Take the latching clock low-high-low to copy the address to the output latches
+  // Transfer the bits in shift register to output register by sending a 0-1-0 pulse to RCLK
   digitalWrite(PIN_LATCH, LOW);
   digitalWrite(PIN_LATCH, HIGH);
   digitalWrite(PIN_LATCH, LOW);
 }
 
-void _writeToAddress(int address, byte data)
+void prepareForWrite()
 {
-  /* Byte write procedure for AT28C64
-   *  1) WE is pulled high
-   *  2) Setup address pins (in series using 74HC595)
-   *  3) Setup data pins (in parallel)
-   *  4) Wait for tAS = 10ns. The MCU is too slow for this to need a delay call
-   *  5) WE is pulled low to latch the address
-   *  6) Wait for tWP = 1000ns
-   *  7) WE is pulled high to latch the data
-   *  8) Wait for tWC - tWP = 1ms - 1000ns ~~ 1ms (is this really needed?)
-   */
-
-  // WE is pulled high
-  digitalWrite(PIN_WE, HIGH);
-  // Setup address pins and set OE high
-  _addressWrite(address, HIGH);
-  // Setup data pins
-  for (int i = PIN_D0; i <= PIN_D7; ++i)
-  {
-    digitalWrite(i, address & 0x1);
-    address >>= 1;
-  }
-  // WE is pulled low
-  digitalWrite(PIN_WE, LOW);
-  // Wait for tWP = 1000ns/1us
-  delayMicroseconds(1);
-  // WE is pulled high
-  digitalWrite(PIN_WE, HIGH);
-  // Wait for tWC - tWP = 1ms
-  delay(1);
-
-  //sprintf(FMTBUF, "(!) Wrote '%02X' at [#%d]", data, address);
-  //Serial.println(FMTBUF);
-}
-
-void _forEachAddress(const char* addr, byte data, AddrCollector collector, AddrAnnouncer announcer)
-{
-  static int s_indices[ADDR_WIDTH] = { 0 };
-  const int N = strlen(addr);
-  if (N < 1) return;
-
-  const int NX = _countx_and_validate(addr, N);
-  if (NX == -1) return;
-
-  if (announcer != nullptr) announcer(addr, data);
-
-  // Calculate all indices for wildcards
-  int raw_address = _collect_indices(s_indices, addr, N);
-
-  collector(raw_address, data);
-
-  const int WMAX = 1 << NX;
-  for (int xval = 1; xval < WMAX; ++xval)
-  {
-    // Insert xval to the address
-    int address = raw_address;
-    for (int i = 0; i < NX; ++i)
-    {
-      int targetIndex = s_indices[i];
-      // Insert bit [i] at xval to bit [targetIndex] at address
-      int ithBit = (xval >> i) & 0x1;
-      address |= ithBit << targetIndex;
-    }
-
-    collector(address, data);
-  }
-}
-
-void _prepareForWrite()
-{
-  pinMode(PIN_LATCH, OUTPUT);
-  pinMode(PIN_SHIFT, OUTPUT);
-  pinMode(PIN_ADDR, OUTPUT);
-  pinMode(PIN_WE, OUTPUT);
-  digitalWrite(PIN_WE, HIGH);
-  _addressWrite(0, HIGH); // Turn off output enable
-  // Set the pins
+  // Turn the EEPROM output off first.
+  setAddress(0, false);
+  // Then we can assert the data on the I/O pins
   for (int pin = PIN_D0; pin <= PIN_D7; ++pin)
   {
     pinMode(pin, OUTPUT);
   }
+  // WE flag is set whenever the writing subroutine prepares a write operation
+  digitalWrite(PIN_WRITE, HIGH); // Write is turned off if WE is high
 }
 
-void _prepareForRead()
+void prepareForRead()
 {
+  // OE flag is set whenever the reading subroutine sets an address
   for (int pin = PIN_D0; pin <= PIN_D7; ++pin)
   {
     pinMode(pin, INPUT);
   }
-  pinMode(PIN_LATCH, OUTPUT);
-  pinMode(PIN_SHIFT, OUTPUT);
-  pinMode(PIN_ADDR, OUTPUT);
-  pinMode(PIN_WE, OUTPUT);
-  digitalWrite(PIN_WE, HIGH);
-  _addressWrite(0, HIGH); // Turn off OE at first
+  digitalWrite(PIN_WRITE, HIGH);
 }
 
-static bool s_writeMatches = true;
-static int s_brokenAddr = 0;
+// EEPROM read code
 
-void _validateData(int address, byte data)
+// Before calling readAt(), the programmer must be put in reading state by calling prepareForRead()
+byte readAt(int address)
 {
-  if (_readData(address) != data)
-  {
-    s_writeMatches = false;
-    s_brokenAddr = address;
-  }
-}
-
-void _writeAnnouncer(const char* addr, byte data)
-{
-  sprintf(FMTBUF, "Writing '%02X' to [%s]", data, addr);
-  Serial.println(FMTBUF);
-}
-
-void _validateAnnouncer(const char* addr, byte data)
-{
-  sprintf(FMTBUF, "Checking [%s] for '%02X'..", addr, data);
-  Serial.println(FMTBUF);
-}
-
-String input(const char* message = nullptr, unsigned int waitTimeUs = 750);
-void writeData(const EEPROM_Data* data)
-{
-  _prepareForWrite();
-  String response = input("Clear EEPROM? (Y/n)\n");
-  switch (response.charAt(0))
-  {
-  case 'Y':
-  case 'y':
-    Serial.println("Clearing EEPROM..");
-    _forEachAddress("xxxxxxxxxxxxx", 0, _writeToAddress, nullptr);
-  }
-  
-  for (const EEPROM_Data* now = data;; ++now)
-  {
-    if (now->address == nullptr)
-    {
-      if (now->data != 0) Serial.println("(!) This ROM is not fully written yet. Don't forget to load the next part");
-      break;
-    }
-    _forEachAddress(now->address, now->data, _writeToAddress, _writeAnnouncer);
-  }
-
-  response = input("Do an integrity check? (Y/n)\n");
-  switch (response.charAt(0))
-  {
-  case 'Y':
-  case 'y':
-    _prepareForRead();
-    s_writeMatches = true;
-    for (const EEPROM_Data* now = data; now->address != nullptr && s_writeMatches; ++now)
-    {
-      _forEachAddress(now->address, now->data, _validateData, _validateAnnouncer);
-    }
-    if (!s_writeMatches)
-    {
-      sprintf(FMTBUF, "(!) EEPROM is not written properly at 0x%x.", s_brokenAddr);
-      Serial.println(FMTBUF);
-    }
-    break;
-  default:
-    Serial.println("Skipped write check");
-  }
-}
-
-byte _readData(int address)
-{
-  _addressWrite(address, LOW);
-
+  setAddress(address, true); // Enable data output from EEPROM
   byte data = 0;
-  for (int pin = PIN_D7; pin >= PIN_D0; --pin)
+  for (int dataPin = PIN_D7; dataPin >= PIN_D0; --dataPin)
   {
-    data = (data << 1) | digitalRead(pin);
+    data = (data << 1) | (digitalRead(dataPin) ? 0x1 : 0x0);
   }
-
-  _addressWrite(0, HIGH); // Turn OE off
   return data;
 }
 
-void readAllData()
+void printROM()
 {
-  _prepareForRead();
-  byte row[16] = {};
+  prepareForRead();
+  Serial.print("\nhADDR | 0  1  2  3  4  5  6  7  : 8  9  A  B  C  D  E  F \n");
 
-  // 2 Byte Divisions
-  sprintf(FMTBUF, "       | 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F");
-  Serial.println(FMTBUF);
-  for (int i = 0; i < ADDR_MAX; i += 16)
+  byte row[16];
+  for (int base = 0; base < MAX_ADDR; base += 16)
   {
-    for (int j = 0; j < 16; ++j)
+    for (int offset = 0; offset < 16; ++offset)
     {
-      row[j] = _readData(i | j);
+      row[offset] = readAt(base + offset);
     }
 
-    sprintf(FMTBUF, "0x%04X | %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X", i,
-            row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7],
-            row[8], row[9], row[10], row[11], row[12], row[13], row[14], row[15]);
-    Serial.println(FMTBUF);
+    PRINTF("h%04X | %02x %02x %02x %02x %02x %02x %02x %02x : %02x %02x %02x %02x %02x %02x %02x %02x\n",
+           base, row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7],
+                 row[8], row[9], row[10], row[11], row[12], row[13], row[14], row[15]);
+  }
+}
+
+// EEPROM write code
+
+// Before calling pollData(), the programmer must be put in reading state by calling prepareForRead()
+// Returns false if polling failed, i.e. the polling cycle has reached [n] attempts (500us x [n] of polling). True if written data has been detected
+bool pollData(int address, byte data, int n = 0)
+{
+  constexpr int POLL_DELAY = 500; // in microsec
+
+  int attempts = 0;
+  while (readAt(address) != data)
+  {
+    if (attempts++ >= n)
+    {
+      // we have reached the polling limit.
+      return false;
+    }
+    delayMicroseconds(POLL_DELAY);
   }
 
+  return true;
 }
 
-void _pollInput(const char* message, unsigned int waitTimeUs)
+// Returns false if EEPROM failed to write timely. True if written data is detected.
+bool writeAt(int address, byte data)
 {
-  if (message != nullptr) Serial.print(message);
-  while (Serial.available() == 0) delayMicroseconds(waitTimeUs);
-}
-
-String input(const char* message, unsigned int waitTimeUs)
-{
-  _pollInput(message, waitTimeUs);
-  String result = Serial.readString();
-  result.trim();
-  return result;
-}
-
-int inputInt(const char* message = nullptr, unsigned int waitTimeUs = 750)
-{
-  _pollInput(message, waitTimeUs);
-  return Serial.parseInt();
-}
-
-void loop() {
-  // put your main code here, to run repeatedly:
-  Serial.println("AT28C64 EEPROM Reader/Programmer");
-  Serial.println("\tThis program runs in [W]rite mode or [R]ead mode.");
-
-  for (;;)
+  PRINTF("[h%04X] <= %02X\n", address, data);
+  prepareForRead();
+  if (pollData(address, data))
   {
-    String response = input();
-    response.trim();
+    return true; // No need to update the data in address
+  }
+  prepareForWrite();
 
-    switch (response.charAt(0))
+  setAddress(address, false);
+  byte ax = data;
+  for (int dataPin = PIN_D0; dataPin <= PIN_D7; ++dataPin)
+  {
+    digitalWrite(dataPin, ax & 0x1);
+    ax >>= 1;
+  }
+  digitalWrite(PIN_WRITE, LOW);
+  // Hold the WE pin low for tWP = 1us
+  delayMicroseconds(1);
+  digitalWrite(PIN_WRITE, HIGH);
+  // Wait for tWCmax = 1ms
+  delay(1);
+
+  //delay(10);
+  //return;
+  
+  // Wait until the EEPROM has done writing
+  prepareForRead();
+  if (!pollData(address, data, 18))
+  {
+    PRINTF("(!) Failed to write data in h%04X! Skipping this address..\n", address);
+    return false;
+  }
+  
+  return true;
+}
+
+// Programming utilities
+
+// void disableSDP()
+// {
+//   prepareForWrite();
+//   writeAt(0x1555, 0xAA);
+//   writeAt(0x0AAA, 0x55);
+//   writeAt(0x1555, 0x80);
+//   writeAt(0x1555, 0xAA);
+//   writeAt(0x0AAA, 0x55);
+//   writeAt(0x1555, 0x20);
+//   delay(10);
+// }
+
+int countX(const char* pattern, int N)
+{
+  int numX = 0, len = 0;
+
+  for (int i = 0; i < N; ++i)
+  {
+    switch (pattern[i])
     {
-    case 'W':
-    case 'w':
-      writeData(LOADED_ROM);
+    case 'X': case 'x':
+      ++numX;
+    case '0': case '1':
+      ++len;
+    case ' ':
       break;
-    case 'R':
-    case 'r':
-      Serial.println("Reading ROM..");
-      readAllData();
-      Serial.println("[end]");
+    
+    default:
+      UNREACHABLE(__LINE__); // Contains unexpected characters
+      return -1;
+    }
+  }
+
+  if (len != 13)
+  {
+    UNREACHABLE(__LINE__); // Address length must be 13 bits
+    return -1;
+  }
+
+  return numX;
+}
+
+int collectX(int* indices, const char* pattern, int N)
+{
+  int i = 0, base_address = 0, index_i = 0;
+  for (int j = N - 1; j >= 0; --j)
+  {
+    switch (pattern[j])
+    {
+    case ' ': continue; // skip spaces
+    case 'X': case 'x':
+      indices[index_i++] = i;
+      // Let X's be zero in the base address
       break;
     default:
-      Serial.println("(!) Unknown mode.");
-      continue;
+      base_address |= (pattern[j] == '0' ? 0 : 1) << i;
     }
-    // This loop runs once on valid input
-    break;
+
+    ++i;
   }
+
+  return base_address;
 }
 
-void setup() {
-  // put your setup code here, to run once:
+bool writeForEachAddress(const char* pattern, byte data)
+{
+  static int s_indices[13] = {};
+  const int N = strlen(pattern);
+  if (N < 1) return true; // Nothing to process
+  
+  const int NX = countX(pattern, N);
+  if (NX == -1) return false; // Ill-formed address table
+
+  PRINTF("Writing %02X to '%s'\n", data, pattern);
+
+  // Calculate the indices for X substitution
+  int base_address = collectX(s_indices, pattern, N);
+
+  bool goodSoFar = true;
+  if (!writeAt(base_address, data)) goodSoFar = false;
+
+  const int SUBMAX = 1 << NX; // Count from 1 to (2^NX) - 1
+  for (int sub = 1; sub < SUBMAX; ++sub)
+  {
+    // Insert sub to the address
+    int address = base_address;
+    for (int i = 0; i < NX; ++i)
+    {
+      int subDst = s_indices[i];
+      // Insert bit [i] at [sub] to bit [subDst] at [address]
+      int ithBit = (sub >> i) & 1;
+      address |= ithBit << subDst;
+    }
+
+    if (!writeAt(address, data)) goodSoFar = false;
+  }
+
+  return goodSoFar;
+}
+
+void setup()
+{
+  pinMode(PIN_ADDR, OUTPUT);
+  pinMode(PIN_SHIFT, OUTPUT);
+  pinMode(PIN_LATCH, OUTPUT);
+  digitalWrite(PIN_WRITE, HIGH);
+  pinMode(PIN_WRITE, OUTPUT);
   Serial.begin(74880);
-  // Set the mode to reading since it may take a while for the user to respond.
-  // In reading mode, the data pins are in High-Z unless readData() is called.
-  _prepareForRead();
+}
+
+void loop()
+{
+  Serial.println("AT28C64 EEPROM Programmer\n\tSelect [W]rite mode, [r]ead mode, or [c]lear to continue.");
+  for (;;)
+  {
+    char ch;
+    switch (ch = input().charAt(0))
+    {
+      case 'C': case 'c':
+        Serial.println("Clearing EEPROM..");
+        writeForEachAddress("x xxxx xxxx xxxx", 0xff);
+        Serial.println("Finished clearing");
+        break;
+      case 'W': case 'w':
+      {
+        switch (input("Clear EEPROM? (Y/n)\n").charAt(0))
+        {
+        case 'Y': case 'y':
+          Serial.println("Clearing EEPROM..");
+          writeForEachAddress("x xxxx xxxx xxxx", 0xFF);
+        }
+
+        bool goodSoFar = true;
+        for (const DataDescriptor* now = LOADED_ROM;; ++now)
+        {
+          if (now->addressPattern == nullptr)
+          {
+            if (now->data != 0) Serial.println("(info) This ROM is not fully written yet. Don't forget to load the next part/s");
+            break;
+          }
+
+          if (!writeForEachAddress(now->addressPattern, now->data)) goodSoFar = false;
+        }
+
+        if (!goodSoFar)
+        {
+          Serial.println("(!) This ROM is not properly written. Check for defects");
+        }
+      } break;
+
+      case 'R': case 'r':
+      {
+        Serial.println("[Read start]");
+        printROM();
+        Serial.println("[Read end]");
+      } break;
+
+    default:
+      PRINTF("(!) Unknown mode '%c'\n", ch);
+      continue;
+    }
+
+    break;
+  }
 }

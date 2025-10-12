@@ -1,7 +1,7 @@
 
 #include "eeprom_data.h"
 
-const EEPROM_Data TTABLE_ROM[] = {
+const DataDescriptor TTABLE_ROM[] = {
   // Dynamic state transitions
   //        ABCD cat
   { "xxxxxx 0000 01x", 1 },
@@ -39,5 +39,6 @@ const EEPROM_Data TTABLE_ROM[] = {
   { "xxxxxx 1101 x1x", 13 },
   { "xxxxxx 1110 1xx", 14 },
   { "xxxxxx 1111 x1x", 15 },
+
   { nullptr, 0 }
 };

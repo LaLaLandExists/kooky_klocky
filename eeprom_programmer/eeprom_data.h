@@ -1,16 +1,16 @@
-#ifndef HAS_EEPROM_DATA_H
-#define HAS_EEPROM_DATA_H
+#ifndef EEPROM_DATA_H
+#define EEPROM_DATA_H
 
-struct EEPROM_Data
+struct DataDescriptor
 {
-  const char* address;
-  char        data;
+  const char* addressPattern;
+  int         data;
 };
 
-extern const EEPROM_Data TTABLE_ROM[];
-extern const EEPROM_Data CPANEL_ROM[];
-extern const EEPROM_Data RGBTABLE_ROM[];
-extern const EEPROM_Data RGBTMUX_ROM1[]; // This ROM is too big to fit in one place
-extern const EEPROM_Data RGBTMUX_ROM2[];
+extern const DataDescriptor CONTROL_ROM[];
+extern const DataDescriptor TTABLE_ROM[];
+extern const DataDescriptor RGBTABLE_ROM[];
+extern const DataDescriptor RGBTMUX_ROM1[];
+extern const DataDescriptor RGBTMUX_ROM2[];
 
-#endif
+#endif // EEPROM_DATA_H

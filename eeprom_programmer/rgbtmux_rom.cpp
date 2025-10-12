@@ -1,7 +1,7 @@
 
 #include "eeprom_data.h"
 
-const EEPROM_Data RGBTMUX_ROM1[] = {
+const DataDescriptor RGBTMUX_ROM1[] = {
   //     c 012345 RGB     RGBrgbS
   { "xxx 0 100000 000", 0b0000000 },
   { "xxx 0 010000 000", 0b0000000 },
@@ -33,7 +33,7 @@ const EEPROM_Data RGBTMUX_ROM1[] = {
   { nullptr, 1 } // Mark the ROM unfinished.
 };
 
-const EEPROM_Data RGBTMUX_ROM2[] = {
+const DataDescriptor RGBTMUX_ROM2[] = {
   //     c 012345 RGB     RGBrgbS
   { "xxx 0 100000 110", 0b1100000 },
   { "xxx 0 010000 110", 0b1100000 },
