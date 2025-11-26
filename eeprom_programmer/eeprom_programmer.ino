@@ -41,6 +41,7 @@ const DataDescriptor TEST_ROM[] = {
   } while (0)
 
 char FMTBUF[FMTBUF_SIZE] = {};
+char g_accessState;
 
 void pollInput(const char* query)
 {
@@ -70,6 +71,8 @@ void setAddress(int address, bool outputEnable)
 
 void prepareForWrite()
 {
+  // The programmer is already in write state.
+  if (g_accessState == 'w') return;
   // Turn the EEPROM output off first.
   setAddress(0, false);
   // Then we can assert the data on the I/O pins
@@ -79,16 +82,20 @@ void prepareForWrite()
   }
   // WE flag is set whenever the writing subroutine prepares a write operation
   digitalWrite(PIN_WRITE, HIGH); // Write is turned off if WE is high
+  g_accessState = 'w';
 }
 
 void prepareForRead()
 {
+  // The programmer is already in read state
+  if (g_accessState == 'r') return;
   // OE flag is set whenever the reading subroutine sets an address
   for (int pin = PIN_D0; pin <= PIN_D7; ++pin)
   {
     pinMode(pin, INPUT);
   }
   digitalWrite(PIN_WRITE, HIGH);
+  g_accessState = 'r';
 }
 
 // EEPROM read code
@@ -301,6 +308,7 @@ void setup()
   digitalWrite(PIN_WRITE, HIGH);
   pinMode(PIN_WRITE, OUTPUT);
   Serial.begin(74880);
+  g_accessState = 'u'; // The programmer is neither writing nor reading at first
 }
 
 void loop()
