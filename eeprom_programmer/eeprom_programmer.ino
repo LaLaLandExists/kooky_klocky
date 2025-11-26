@@ -147,10 +147,16 @@ bool pollData(int address, byte data, int n = 0)
 }
 
 // Returns false if EEPROM failed to write timely. True if written data is detected.
-bool writeAt(int address, byte data)
+bool writeAt(int address, byte data, bool superimpose)
 {
   PRINTF("[h%04X] <= %02X\n", address, data);
   prepareForRead();
+
+  if (superimpose)
+  {
+    data |= readAt(address);
+  }
+  
   if (pollData(address, data))
   {
     return true; // No need to update the data in address
@@ -251,7 +257,7 @@ int collectX(int* indices, const char* pattern, int N)
   return base_address;
 }
 
-bool writeForEachAddress(const char* pattern, byte data)
+bool writeForEachAddress(const char* pattern, byte data, bool superimpose)
 {
   static int s_indices[13] = {};
   const int N = strlen(pattern);
@@ -266,7 +272,7 @@ bool writeForEachAddress(const char* pattern, byte data)
   int base_address = collectX(s_indices, pattern, N);
 
   bool goodSoFar = true;
-  if (!writeAt(base_address, data)) goodSoFar = false;
+  if (!writeAt(base_address, data, superimpose)) goodSoFar = false;
 
   const int SUBMAX = 1 << NX; // Count from 1 to (2^NX) - 1
   for (int sub = 1; sub < SUBMAX; ++sub)
@@ -281,7 +287,7 @@ bool writeForEachAddress(const char* pattern, byte data)
       address |= ithBit << subDst;
     }
 
-    if (!writeAt(address, data)) goodSoFar = false;
+    if (!writeAt(address, data, superimpose)) goodSoFar = false;
   }
 
   return goodSoFar;
@@ -307,16 +313,26 @@ void loop()
     {
       case 'C': case 'c':
         Serial.println("Clearing EEPROM..");
-        writeForEachAddress("x xxxx xxxx xxxx", 0xff);
+        writeForEachAddress("x xxxx xxxx xxxx", 0xff, false);
         Serial.println("Finished clearing");
         break;
       case 'W': case 'w':
       {
-        switch (input("Clear EEPROM? (Y/n)\n").charAt(0))
+        bool superimpose = false;
+
+        switch (input("Superimpose ROM content? (Y/n)\n").charAt(0))
+        {
+        case 'Y': case 'y':
+          Serial.println("Preparing for superimposition...");
+          writeForEachAddress("x xxxx xxxx xxxx", 0x00, false);
+          superimpose = true;
+        }
+        
+        if (!superimpose) switch (input("Clear EEPROM? (Y/n)\n").charAt(0))
         {
         case 'Y': case 'y':
           Serial.println("Clearing EEPROM..");
-          writeForEachAddress("x xxxx xxxx xxxx", 0xFF);
+          writeForEachAddress("x xxxx xxxx xxxx", 0xFF, false);
         }
 
         bool goodSoFar = true;
@@ -328,7 +344,7 @@ void loop()
             break;
           }
 
-          if (!writeForEachAddress(now->addressPattern, now->data)) goodSoFar = false;
+          if (!writeForEachAddress(now->addressPattern, now->data, superimpose)) goodSoFar = false;
         }
 
         if (!goodSoFar)
