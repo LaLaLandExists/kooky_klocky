@@ -13,6 +13,7 @@
 #define PIN_D7 12
 
 // Limits for AT28C64. Modify if needed
+#define MAX_ABITS 13
 #define MAX_ADDR 1 << 13 // Exclusive maximum. (2^13 - 1)
 
 // Which ROM do we load?
@@ -311,6 +312,74 @@ void setup()
   g_accessState = 'u'; // The programmer is neither writing nor reading at first
 }
 
+static bool isBinaryChar(char ch)
+{
+  return ch == '0' || ch == '1';
+}
+
+int parseBinary(String str)
+{
+  int bits[MAX_ABITS] = { 0 };
+  int bitCount = 0;
+  const int N = strlen(str);
+  for (int i = 0; i < N; ++i)
+  {
+    if (isBinaryChar(str.charAt(i))) ++bitCount;
+  }
+  
+  int j = 0;
+  for (int i = 0; i < N; ++i)
+  {
+    char bin = str.charAt(i);
+    if (isBinaryChar(bin))
+    {
+      bits[bitCount - 1 - j] = bin == '0' ? 0 : 1;
+      ++j;
+    }
+  }
+  
+  int ax = 0;
+  for (int i = 0; i < bitCount; ++i)
+  {
+    ax |= 1 << i;
+  }
+  return ax;
+}
+
+void printBinary(int n)
+{
+  for (int mask = 0x80; mask; mask >>= 1)
+  {
+    if ((mask & n) != 0) Serial.print("1");
+    else                 Serial.print("0");
+  }
+}
+
+void queryLoop()
+{
+  prepareForRead();
+  Serial.println("Query mode");
+  
+  for (;;)
+  {
+    String entered = input("$ ");
+    switch (entered.charAt(0))
+    {
+    case 'Q': case 'q':
+      return;
+    }
+    
+    int address = parseBinary(entered);
+    int data = readAt(address);
+    
+    Serial.print("\t");
+    printBinary(address);
+    Serial.print(" -> [");
+    printBinary(data);
+    Serial.println("]");
+  }
+}
+
 void loop()
 {
   Serial.println("AT28C64 EEPROM Programmer\n\tSelect [W]rite mode, [r]ead mode, or [c]lear to continue.");
@@ -367,7 +436,9 @@ void loop()
         printROM();
         Serial.println("[Read end]");
       } break;
-
+      
+      case 'Q': case 'q': queryLoop(); break;
+      
     default:
       PRINTF("(!) Unknown mode '%c'\n", ch);
       continue;
